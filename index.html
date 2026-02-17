@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Prompter (Android Safe)</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#111827; --text:#e5e7eb; --muted:#94a3b8;
+      --accent:#38bdf8; --border: rgba(148,163,184,.22); --radius:16px;
+      --menuW: 360px;
+    }
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; }
+    body{ margin:0; font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial; background:var(--bg); color:var(--text); }
+
+    .stage{ position:relative; height:100%; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+
+    .prompter{
+      height:100%;
+      overflow:auto;
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      background: rgba(17,24,39,.22);
+      -webkit-overflow-scrolling: touch;
+    }
+    .marker{
+      position: sticky;
+      top: 45%;
+      height: 0;
+      border-top: 2px solid rgba(56,189,248,.55);
+      margin: 0 1rem;
+      pointer-events:none;
+      z-index:2;
+    }
+    .content{
+      padding: 16vh 5.5vw 24vh;
+      font-size: 30px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+
+    .menu{
+      position:absolute;
+      top: 10px;
+      left: 10px;
+      bottom: 10px;
+      width: min(var(--menuW), calc(100vw - 20px));
+      background: rgba(17,24,39,.92);
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      display:flex;
+      flex-direction:column;
+      gap: 10px;
+      z-index:10;
+      transform: translateX(0);
+      transition: transform .2s ease;
+    }
+    .menu.is-collapsed{ transform: translateX(calc(-100% - 16px)); }
+
+    .menuHeader{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+    .title{ font-weight:700; font-size:14px; }
+    .status{ color: var(--muted); font-size:12.5px; margin-top:4px; }
+
+    .row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+
+    button, textarea, input{ font:inherit; color:var(--text); }
+    button{
+      border:1px solid var(--border);
+      background: rgba(17,24,39,.95);
+      padding: .55rem .75rem;
+      border-radius: 14px;
+      cursor:pointer;
+    }
+    button.primary{ border-color: rgba(56,189,248,.45); }
+    button:disabled{ opacity:.55; cursor:not-allowed; }
+
+    .pill{
+      display:flex; align-items:center; gap:.5rem;
+      padding:.4rem .6rem; border-radius:999px; border:1px solid var(--border);
+      background: rgba(17,24,39,.75);
+    }
+    .pill label{ color:var(--muted); font-size:.85rem; white-space:nowrap; }
+    .pill input[type="range"]{ width: 150px; }
+
+    textarea{
+      width:100%;
+      min-height: 130px;
+      background: rgba(17,24,39,.65);
+      border:1px solid var(--border);
+      border-radius: 14px;
+      padding: .8rem;
+      outline:none;
+    }
+
+    .handle{
+      position:absolute;
+      top: 14px;
+      left: 14px;
+      z-index: 20;
+      display:none;
+      gap: 8px;
+    }
+    .handle button{ border-radius:999px; padding:.55rem .7rem; }
+
+    .hint{ color:var(--muted); font-size:12.5px; line-height:1.35; }
+  </style>
+</head>
+<body>
+  <div class="stage">
+    <div class="handle" id="handle">
+      <button id="btnMenuOpen" class="primary">☰</button>
+      <button id="btnFullscreen2">⛶</button>
+    </div>
+
+    <aside class="menu" id="menu">
+      <div class="menuHeader">
+        <div>
+          <div class="title">Prompter</div>
+          <div class="status" id="status">Bereit. Text einfügen → Start.</div>
+        </div>
+        <button id="btnMenuCollapse" title="Menü einklappen">⟨</button>
+      </div>
+
+      <div class="row">
+        <button id="btnStart" class="primary">🎙️ Voice-Follow</button>
+        <button id="btnStop">⏹️ Stop</button>
+        <button id="btnResync">🔁 Re-Sync</button>
+      </div>
+
+      <div class="row">
+        <button id="btnScroll" class="primary">▶️ Auto-Scroll</button>
+        <button id="btnScrollStop">⏸️ Pause</button>
+        <button id="btnFullscreen" class="primary">⛶ Vollbild</button>
+      </div>
+
+      <div class="row">
+        <span class="pill">
+          <label>Speed</label>
+          <input id="speed" type="range" min="0" max="100" value="22" />
+        </span>
+        <span class="pill">
+          <label>Schrift</label>
+          <input id="font" type="range" min="18" max="54" value="30" />
+        </span>
+      </div>
+
+      <div class="row">
+        <span class="pill">
+          <label><input id="snap" type="checkbox" checked /> Jump-to-match</label>
+        </span>
+      </div>
+
+      <textarea id="text" placeholder="Hier deinen Vortragstext einfügen…"></textarea>
+      <div class="hint">Hinweis: Voice-Follow läuft am besten in <b>Chrome</b> und mit Mikro-Zulassung.</div>
+    </aside>
+
+    <main class="prompter" id="prompter">
+      <div class="marker"></div>
+      <div class="content" id="content"></div>
+    </main>
+  </div>
+
+<script>
+(() => {
+  const menu = document.getElementById('menu');
+  const handle = document.getElementById('handle');
+  const elText = document.getElementById('text');
+  const elContent = document.getElementById('content');
+  const elPrompter = document.getElementById('prompter');
+  const elStatus = document.getElementById('status');
+
+  const elSpeed = document.getElementById('speed');
+  const elFont  = document.getElementById('font');
+  const elSnap  = document.getElementById('snap');
+
+  const btnStart = document.getElementById('btnStart');
+  const btnStop  = document.getElementById('btnStop');
+  const btnScroll = document.getElementById('btnScroll');
+  const btnScrollStop = document.getElementById('btnScrollStop');
+  const btnResync = document.getElementById('btnResync');
+
+  const btnFullscreen = document.getElementById('btnFullscreen');
+  const btnFullscreen2 = document.getElementById('btnFullscreen2');
+
+  const btnMenuCollapse = document.getElementById('btnMenuCollapse');
+  const btnMenuOpen = document.getElementById('btnMenuOpen');
+
+  function setStatus(msg){ elStatus.textContent = msg; }
+
+  function render(){
+    elContent.textContent = elText.value || "⬅️ Text einfügen…";
+  }
+  elText.addEventListener('input', render);
+  render();
+
+  function applyFont(){
+    elContent.style.fontSize = elFont.value + "px";
+  }
+  elFont.addEventListener('input', applyFont);
+  applyFont();
+
+  function collapseMenu(){
+    menu.classList.add('is-collapsed');
+    handle.style.display = 'flex';
+  }
+  function openMenu(){
+    menu.classList.remove('is-collapsed');
+    handle.style.display = 'none';
+  }
+  btnMenuCollapse.addEventListener('click', collapseMenu);
+  btnMenuOpen.addEventListener('click', openMenu);
+
+  // --- Auto-scroll ---
+  let raf = null;
+  let autoScrollOn = false;
+
+  function tick(){
+    if (!autoScrollOn) return;
+    const v = Number(elSpeed.value);
+    const pxPerSec = (v * v) / 60;
+    elPrompter.scrollTop += pxPerSec / 60;
+    raf = requestAnimationFrame(tick);
+  }
+
+  btnScroll.addEventListener('click', () => {
+    autoScrollOn = true;
+    if (!raf) raf = requestAnimationFrame(tick);
+    setStatus("Auto-Scroll läuft.");
+  });
+
+  btnScrollStop.addEventListener('click', () => {
+    autoScrollOn = false;
+    if (raf) cancelAnimationFrame(raf);
+    raf = null;
+    setStatus("Auto-Scroll pausiert.");
+  });
+
+  // --- Voice follow (Android-safe normalize) ---
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null;
+  let lastTranscript = "";
+  let lastMatchIndex = 0;
+
+  function normalize(s){
+    return (s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9äöüß\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function findBestMatchIndex(textNorm, spoken, fromIdx){
+    const sp = normalize(spoken);
+    if (!textNorm || !sp) return -1;
+
+    const words = sp.split(" ").filter(Boolean);
+    const anchor = words.slice(-6).join(" ");
+    const a = anchor.length >= 8 ? anchor : sp;
+
+    const start = Math.max(0, fromIdx - 800);
+    const end = Math.min(textNorm.length, fromIdx + 3500);
+    const slice = textNorm.slice(start, end);
+
+    const local = slice.indexOf(a);
+    if (local !== -1) return start + local;
+
+    for (let k = 5; k >= 3; k--){
+      const t = words.slice(-k).join(" ");
+      if (t.length < 8) continue;
+      const l = slice.indexOf(t);
+      if (l !== -1) return start + l;
+    }
+
+    return textNorm.indexOf(a);
+  }
+
+  function scrollToMatch(rawText, matchIdxNorm){
+    if (matchIdxNorm < 0) return;
+
+    const raw = rawText;
+    const norm = normalize(raw);
+    const ratio = norm.length ? (matchIdxNorm / norm.length) : 0;
+
+    const target = ratio * (elPrompter.scrollHeight - elPrompter.clientHeight);
+    const offset = elPrompter.clientHeight * 0.40;
+    elPrompter.scrollTop = Math.max(0, target - offset);
+  }
+
+  function startRec(){
+    if (!SpeechRecognition){
+      setStatus("❌ SpeechRecognition nicht verfügbar. Öffne in Chrome.");
+      return;
+    }
+    if (rec) return;
+
+    rec = new SpeechRecognition();
+    rec.lang = "de-DE";
+    rec.continuous = true;
+    rec.interimResults = true;
+
+    rec.onstart = () => setStatus("🎙️ Voice-Follow aktiv.");
+    rec.onerror = (e) => setStatus("⚠️ Speech-Error: " + (e.error || "unbekannt"));
+    rec.onend = () => { setStatus("⏹️ Voice-Follow gestoppt."); rec = null; };
+
+    rec.onresult = (ev) => {
+      let interim = "", finalTxt = "";
+      for (let i = ev.resultIndex; i < ev.results.length; i++){
+        const r = ev.results[i];
+        if (r.isFinal) finalTxt += r[0].transcript + " ";
+        else interim += r[0].transcript + " ";
+      }
+      const combined = (finalTxt + interim).trim();
+      if (!combined || combined === lastTranscript) return;
+      lastTranscript = combined;
+
+      const rawText = elText.value || "";
+      const textNorm = normalize(rawText);
+
+      const matchIdx = findBestMatchIndex(textNorm, combined, lastMatchIndex);
+      if (matchIdx >= 0){
+        lastMatchIndex = matchIdx;
+        if (elSnap.checked) scrollToMatch(rawText, matchIdx);
+        setStatus("🎙️ synchronisiert.");
+      } else {
+        setStatus("🎙️ höre dich, finde die Stelle nicht – Re-Sync.");
+      }
+    };
+
+    try { rec.start(); } catch (e){ setStatus("⚠️ Start fehlgeschlagen: " + e.message); }
+  }
+
+  function stopRec(){
+    if (!rec) return;
+    try { rec.stop(); } catch(e){}
+  }
+
+  btnStart.addEventListener('click', startRec);
+  btnStop.addEventListener('click', stopRec);
+
+  btnResync.addEventListener('click', () => {
+    const raw = elText.value || "";
+    const ratio = elPrompter.scrollTop / Math.max(1, (elPrompter.scrollHeight - elPrompter.clientHeight));
+    lastMatchIndex = Math.floor(ratio * normalize(raw).length);
+    setStatus("🔁 Re-Sync gesetzt.");
+  });
+
+  // --- Fullscreen ---
+  async function toggleFullscreen(){
+    try{
+      if (!document.fullscreenElement){
+        await document.documentElement.requestFullscreen();
+        setStatus("⛶ Vollbild aktiv.");
+      } else {
+        await document.exitFullscreen();
+        setStatus("Vollbild beendet.");
+      }
+    } catch(e){
+      setStatus("⚠️ Vollbild nicht möglich: " + e.message);
+    }
+  }
+  btnFullscreen.addEventListener('click', toggleFullscreen);
+  btnFullscreen2.addEventListener('click', toggleFullscreen);
+
+})();
+</script>
+</body>
+</html>
