@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <title>Prompter (Stabil + Stage + Smooth + Karaoke)</title>
+  <title>Prompter (Stabil + Stage + Smooth + Karaoke + WakeLock)</title>
   <style>
     :root{
       --bg:#0b0f14; --panel:#111827; --text:#e5e7eb; --muted:#94a3b8;
@@ -272,6 +272,14 @@
         <span class="pill">
           <label><input id="karaoke" type="checkbox" checked /> Karaoke</label>
         </span>
+
+        <!-- ✅ NEW: Wake Lock toggle -->
+        <span class="pill">
+          <label><input id="wakelock" type="checkbox" checked /> 🔆 Wach halten</label>
+        </span>
+      </div>
+
+      <div class="row">
         <span class="pill">
           <label>Vorlauf</label>
           <input id="lead" type="range" min="0" max="6" value="2" />
@@ -332,6 +340,10 @@
   const elSnap  = document.getElementById('snap');
   const elStable = document.getElementById('stable');
   const elKara = document.getElementById('karaoke');
+
+  // ✅ NEW: Wake lock checkbox
+  const elWake = document.getElementById('wakelock');
+
   const elLead = document.getElementById('lead');
   const leadLabel = document.getElementById('leadLabel');
   const elPos = document.getElementById('pos');
@@ -376,7 +388,7 @@
   }
 
   // Karaoke state
-  let karaStart = -1; // index in raw text (best effort)
+  let karaStart = -1;
   let karaLen = 0;
 
   function renderContent(){
@@ -388,7 +400,6 @@
       return;
     }
 
-    // Best-effort highlight by raw indices (may be slightly off with normalization)
     const start = Math.max(0, Math.min(raw.length, karaStart));
     const end = Math.max(start, Math.min(raw.length, start + karaLen));
 
@@ -413,8 +424,7 @@
 
   // Lead/Position sliders
   function leadValue(){
-    // 0..6 -> 0.00..0.06
-    const v = Number(elLead.value) / 100;
+    const v = Number(elLead.value) / 100; // 0..6 -> 0.00..0.06
     leadLabel.textContent = v.toFixed(2);
     return v;
   }
@@ -422,7 +432,7 @@
   leadValue();
 
   function posValue(){
-    const v = Number(elPos.value) / 100;
+    const v = Number(elPos.value) / 100; // 30..75 -> 0.30..0.75
     posLabel.textContent = v.toFixed(2);
     return v;
   }
@@ -441,7 +451,7 @@
   btnMenuCollapse.addEventListener('click', collapseMenu);
   btnMenuOpen.addEventListener('click', openMenu);
 
-  // Auto-scroll (manual)
+  // Auto-scroll
   let raf = null;
   let autoScrollOn = false;
 
@@ -484,15 +494,13 @@
       const current = elPrompter.scrollTop;
       const diff = targetScrollTop - current;
 
-      // close enough
       if (Math.abs(diff) < 0.8){
         elPrompter.scrollTop = targetScrollTop;
         targetScrollTop = null;
         return;
       }
 
-      // Lerp speed: 0.18 = smooth glide
-      elPrompter.scrollTop = current + diff * 0.18;
+      elPrompter.scrollTop = current + diff * 0.18; // glide factor
       smoothRaf = requestAnimationFrame(step);
     };
 
@@ -525,11 +533,9 @@
     return textNorm.indexOf(a);
   }
 
-  // Map normalized index to approximate raw index (best effort)
+  // Map normalized index to approximate raw index
   function approxRawIndexFromNorm(raw, normIdx){
-    // Build a mapping by scanning raw and constructing normalized stream with index map
-    // This is "best effort" and light-weight enough for mobile.
-    let map = []; // normIndex -> rawIndex
+    let map = [];
     let n = 0;
     let prevWasSpace = true;
 
@@ -545,35 +551,33 @@
         n++;
         prevWasSpace = false;
       } else if (!prevWasSpace) {
-        // normalize non-word run to single space
         map[n] = i;
         n++;
         prevWasSpace = true;
       }
-      if (n > normIdx + 500) break; // stop early if far ahead
+      if (n > normIdx + 500) break;
     }
     if (normIdx < 0) return 0;
     if (normIdx >= map.length) return raw.length;
     return map[normIdx] ?? raw.length;
   }
 
-  // ✅ ScrollToMatch: smooth glide + lead + position
+  // ScrollToMatch: smooth glide + lead + position
   function scrollToMatch(rawText, matchIdxNorm){
     if (matchIdxNorm < 0) return;
 
     const norm = normalize(rawText);
-    const lead = Math.floor(norm.length * leadValue());     // e.g. 0.02
+    const lead = Math.floor(norm.length * leadValue());
     const idx = Math.min(norm.length, matchIdxNorm + lead);
     const ratio = norm.length ? (idx / norm.length) : 0;
 
     const maxScroll = elPrompter.scrollHeight - elPrompter.clientHeight;
-    const desiredViewportPosition = posValue();             // e.g. 0.45
+    const desiredViewportPosition = posValue();
     const offset = elPrompter.clientHeight * desiredViewportPosition;
 
     const target = ratio * maxScroll;
     const top = Math.max(0, target - offset);
 
-    // Smooth glide instead of jump
     smoothTo(top);
   }
 
@@ -677,7 +681,7 @@
       if (matchIdx >= 0){
         lastMatchIndex = matchIdx;
 
-        // Karaoke: highlight approximate raw section of last phrase
+        // Karaoke highlight
         if (elKara.checked){
           const normSpoken = normalize(combined);
           const phraseLen = Math.min(220, Math.max(20, normSpoken.length));
@@ -789,6 +793,61 @@
     if (menu.classList.contains('is-collapsed')) openMenu();
     else collapseMenu();
   });
+
+  // ==========================
+  // ✅ Wake Lock integration
+  // ==========================
+  let wakeLock = null;
+
+  async function requestWakeLock(){
+    try{
+      if (!('wakeLock' in navigator)){
+        setStatus("ℹ️ Wach halten: Browser unterstützt Wake Lock nicht.");
+        return;
+      }
+      wakeLock = await navigator.wakeLock.request('screen');
+      setStatus("🔆 Display bleibt wach (Wake Lock aktiv).");
+
+      wakeLock.addEventListener('release', () => {
+        wakeLock = null;
+        // Keine Dauer-Spam-Meldung, aber kurze Info ist ok:
+        setStatus("ℹ️ Wake Lock gelöst (wird ggf. neu aktiviert).");
+      });
+    } catch(err){
+      wakeLock = null;
+      setStatus("⚠️ Wake Lock nicht möglich: " + (err?.name || err));
+    }
+  }
+
+  async function releaseWakeLock(){
+    try{
+      if (wakeLock){
+        await wakeLock.release();
+        wakeLock = null;
+        setStatus("🔅 Wach halten aus.");
+      }
+    } catch(e){
+      wakeLock = null;
+    }
+  }
+
+  if (elWake){
+    elWake.addEventListener('change', async () => {
+      if (elWake.checked) await requestWakeLock();
+      else await releaseWakeLock();
+    });
+  }
+
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible' && elWake?.checked){
+      await requestWakeLock();
+    }
+  });
+
+  window.addEventListener('load', async () => {
+    if (elWake?.checked) await requestWakeLock();
+  });
+
 })();
 </script>
 </body>
