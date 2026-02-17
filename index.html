@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Prompter (Android Safe)</title>
+  <title>Prompter (Stabil Mode)</title>
   <style>
     :root{
       --bg:#0b0f14; --panel:#111827; --text:#e5e7eb; --muted:#94a3b8;
@@ -72,6 +72,7 @@
       padding: .55rem .75rem;
       border-radius: 14px;
       cursor:pointer;
+      user-select:none;
     }
     button.primary{ border-color: rgba(56,189,248,.45); }
     button:disabled{ opacity:.55; cursor:not-allowed; }
@@ -86,7 +87,7 @@
 
     textarea{
       width:100%;
-      min-height: 130px;
+      min-height: 120px;
       background: rgba(17,24,39,.65);
       border:1px solid var(--border);
       border-radius: 14px;
@@ -105,6 +106,24 @@
     .handle button{ border-radius:999px; padding:.55rem .7rem; }
 
     .hint{ color:var(--muted); font-size:12.5px; line-height:1.35; }
+
+    /* Listening indicator */
+    .dot{
+      width: 10px; height: 10px; border-radius: 999px;
+      background: rgba(148,163,184,.35);
+      display:inline-block;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .dot.live{
+      background: var(--accent);
+      box-shadow: 0 0 0 4px rgba(56,189,248,.15);
+      animation: pulse 1.1s ease-in-out infinite;
+    }
+    @keyframes pulse{
+      0%,100%{ transform: scale(1); opacity: 1; }
+      50%{ transform: scale(1.15); opacity: .75; }
+    }
   </style>
 </head>
 <body>
@@ -117,8 +136,11 @@
     <aside class="menu" id="menu">
       <div class="menuHeader">
         <div>
-          <div class="title">Prompter</div>
-          <div class="status" id="status">Bereit. Text einfügen → Start.</div>
+          <div class="title">
+            <span class="dot" id="dot"></span>
+            Prompter
+          </div>
+          <div class="status" id="status">Bereit. Text einfügen → Voice-Follow starten.</div>
         </div>
         <button id="btnMenuCollapse" title="Menü einklappen">⟨</button>
       </div>
@@ -150,10 +172,15 @@
         <span class="pill">
           <label><input id="snap" type="checkbox" checked /> Jump-to-match</label>
         </span>
+        <span class="pill">
+          <label><input id="stable" type="checkbox" checked /> Stabil Mode</label>
+        </span>
       </div>
 
       <textarea id="text" placeholder="Hier deinen Vortragstext einfügen…"></textarea>
-      <div class="hint">Hinweis: Voice-Follow läuft am besten in <b>Chrome</b> und mit Mikro-Zulassung.</div>
+      <div class="hint">
+        Tipp: Chrome → Mikro zulassen. Stabil Mode startet automatisch neu, falls Chrome stoppt.
+      </div>
     </aside>
 
     <main class="prompter" id="prompter">
@@ -170,10 +197,12 @@
   const elContent = document.getElementById('content');
   const elPrompter = document.getElementById('prompter');
   const elStatus = document.getElementById('status');
+  const dot = document.getElementById('dot');
 
   const elSpeed = document.getElementById('speed');
   const elFont  = document.getElementById('font');
   const elSnap  = document.getElementById('snap');
+  const elStable = document.getElementById('stable');
 
   const btnStart = document.getElementById('btnStart');
   const btnStop  = document.getElementById('btnStop');
@@ -188,7 +217,11 @@
   const btnMenuOpen = document.getElementById('btnMenuOpen');
 
   function setStatus(msg){ elStatus.textContent = msg; }
+  function setListening(on){
+    dot.classList.toggle('live', !!on);
+  }
 
+  // Render
   function render(){
     elContent.textContent = elText.value || "⬅️ Text einfügen…";
   }
@@ -201,6 +234,7 @@
   elFont.addEventListener('input', applyFont);
   applyFont();
 
+  // Menu collapse / expand
   function collapseMenu(){
     menu.classList.add('is-collapsed');
     handle.style.display = 'flex';
@@ -212,7 +246,7 @@
   btnMenuCollapse.addEventListener('click', collapseMenu);
   btnMenuOpen.addEventListener('click', openMenu);
 
-  // --- Auto-scroll ---
+  // Auto-scroll
   let raf = null;
   let autoScrollOn = false;
 
@@ -237,11 +271,18 @@
     setStatus("Auto-Scroll pausiert.");
   });
 
-  // --- Voice follow (Android-safe normalize) ---
+  // Voice-follow (stabil)
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   let rec = null;
+
+  let shouldRestart = false;     // master switch
+  let restartTimer = null;
+  let restartDelay = 350;        // backoff start
+  const restartDelayMax = 5000;  // backoff cap
+
   let lastTranscript = "";
   let lastMatchIndex = 0;
+  let lastHeardAt = 0;           // activity heartbeat
 
   function normalize(s){
     return (s || "")
@@ -272,15 +313,12 @@
       const l = slice.indexOf(t);
       if (l !== -1) return start + l;
     }
-
     return textNorm.indexOf(a);
   }
 
   function scrollToMatch(rawText, matchIdxNorm){
     if (matchIdxNorm < 0) return;
-
-    const raw = rawText;
-    const norm = normalize(raw);
+    const norm = normalize(rawText);
     const ratio = norm.length ? (matchIdxNorm / norm.length) : 0;
 
     const target = ratio * (elPrompter.scrollHeight - elPrompter.clientHeight);
@@ -288,32 +326,91 @@
     elPrompter.scrollTop = Math.max(0, target - offset);
   }
 
-  function startRec(){
+  function clearRestartTimer(){
+    if (restartTimer) clearTimeout(restartTimer);
+    restartTimer = null;
+  }
+
+  function scheduleRestart(reason){
+    clearRestartTimer();
+    if (!shouldRestart || !elStable.checked) return;
+
+    setListening(false);
+    setStatus(`⚠️ Voice-Follow beendet (${reason}) – starte neu…`);
+
+    restartTimer = setTimeout(() => {
+      restartTimer = null;
+      tryStartRecognition();
+    }, restartDelay);
+
+    restartDelay = Math.min(restartDelayMax, Math.floor(restartDelay * 1.35));
+  }
+
+  function resetBackoff(){
+    restartDelay = 350;
+  }
+
+  function buildRecognition(){
+    const r = new SpeechRecognition();
+    r.lang = "de-DE";
+    r.continuous = true;
+    r.interimResults = true;
+    return r;
+  }
+
+  function tryStartRecognition(){
     if (!SpeechRecognition){
       setStatus("❌ SpeechRecognition nicht verfügbar. Öffne in Chrome.");
       return;
     }
-    if (rec) return;
+    if (!shouldRestart) return;
 
-    rec = new SpeechRecognition();
-    rec.lang = "de-DE";
-    rec.continuous = true;
-    rec.interimResults = true;
+    // if an old instance exists, release it
+    if (rec){
+      try { rec.onend = null; rec.onerror = null; rec.onresult = null; } catch(e){}
+      rec = null;
+    }
 
-    rec.onstart = () => setStatus("🎙️ Voice-Follow aktiv.");
-    rec.onerror = (e) => setStatus("⚠️ Speech-Error: " + (e.error || "unbekannt"));
-    rec.onend = () => { setStatus("⏹️ Voice-Follow gestoppt."); rec = null; };
+    rec = buildRecognition();
+
+    rec.onstart = () => {
+      resetBackoff();
+      setListening(true);
+      setStatus("🎙️ Voice-Follow aktiv (Stabil Mode).");
+    };
+
+    rec.onerror = (e) => {
+      const err = (e && e.error) ? e.error : "unknown";
+      // "not-allowed" means mic permission / origin issue -> do NOT restart-loop aggressively
+      if (err === "not-allowed" || err === "service-not-allowed"){
+        shouldRestart = false;
+        setListening(false);
+        setStatus("❌ Mikro nicht erlaubt. Chrome → Website-Einstellungen → Mikro erlauben.");
+        try { rec.stop(); } catch(_) {}
+        rec = null;
+        return;
+      }
+      // "aborted" happens when we stop/restart; "no-speech" often when silence
+      scheduleRestart(err);
+    };
+
+    rec.onend = () => {
+      // Chrome may end randomly; restart if requested
+      scheduleRestart("end");
+    };
 
     rec.onresult = (ev) => {
       let interim = "", finalTxt = "";
       for (let i = ev.resultIndex; i < ev.results.length; i++){
-        const r = ev.results[i];
-        if (r.isFinal) finalTxt += r[0].transcript + " ";
-        else interim += r[0].transcript + " ";
+        const rr = ev.results[i];
+        if (rr.isFinal) finalTxt += rr[0].transcript + " ";
+        else interim += rr[0].transcript + " ";
       }
       const combined = (finalTxt + interim).trim();
       if (!combined || combined === lastTranscript) return;
+
       lastTranscript = combined;
+      lastHeardAt = Date.now();
 
       const rawText = elText.value || "";
       const textNorm = normalize(rawText);
@@ -328,13 +425,51 @@
       }
     };
 
-    try { rec.start(); } catch (e){ setStatus("⚠️ Start fehlgeschlagen: " + e.message); }
+    try{
+      rec.start();
+    } catch(e){
+      // If start throws (often if called too fast), schedule restart with backoff
+      scheduleRestart("start-failed");
+    }
+  }
+
+  function startRec(){
+    if (!SpeechRecognition){
+      setStatus("❌ SpeechRecognition nicht verfügbar. Öffne in Chrome.");
+      return;
+    }
+    shouldRestart = true;
+    clearRestartTimer();
+    resetBackoff();
+    setStatus("🎙️ Starte Voice-Follow…");
+    tryStartRecognition();
   }
 
   function stopRec(){
-    if (!rec) return;
-    try { rec.stop(); } catch(e){}
+    shouldRestart = false;
+    clearRestartTimer();
+    setListening(false);
+    setStatus("⏹️ Voice-Follow gestoppt.");
+    if (rec){
+      try { rec.stop(); } catch(e){}
+      rec = null;
+    }
   }
+
+  // Heartbeat: if we're "on" but nothing heard for long and Chrome ended silently, restart.
+  // (Also helps if recognition hangs without firing onend.)
+  setInterval(() => {
+    if (!shouldRestart || !elStable.checked) return;
+    if (!rec) return; // if ended, onend should restart
+    const now = Date.now();
+    // If we haven't heard anything for 35s, poke a restart to avoid dead state.
+    if (lastHeardAt && (now - lastHeardAt) > 35000){
+      scheduleRestart("idle");
+      try { rec.stop(); } catch(e){}
+      rec = null;
+      lastHeardAt = now;
+    }
+  }, 5000);
 
   btnStart.addEventListener('click', startRec);
   btnStop.addEventListener('click', stopRec);
@@ -346,7 +481,7 @@
     setStatus("🔁 Re-Sync gesetzt.");
   });
 
-  // --- Fullscreen ---
+  // Fullscreen
   async function toggleFullscreen(){
     try{
       if (!document.fullscreenElement){
