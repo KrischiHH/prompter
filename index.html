@@ -2,18 +2,19 @@
 <html lang="de">
 <head>
   <meta charset="utf-8" />
-  <!-- Wichtig: user-scalable=no + viewport-fit -->
+  <!-- Mobile locked / best-effort no zoom -->
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <title>Prompter (Stabil + Stage Mode, Mobile Locked)</title>
+  <title>Prompter (Stabil + Stage + Karaoke)</title>
   <style>
     :root{
       --bg:#0b0f14; --panel:#111827; --text:#e5e7eb; --muted:#94a3b8;
       --accent:#38bdf8; --border: rgba(148,163,184,.22); --radius:16px;
       --menuW: 360px;
+      --karaokeSpoken: rgba(56,189,248,.45);
+      --karaokeActiveBg: rgba(56,189,248,.22);
     }
     *{ box-sizing:border-box; }
 
-    /* verhindert iOS text-size-adjust & einige Auto-Zoom Effekte */
     html{
       -webkit-text-size-adjust: 100%;
       text-size-adjust: 100%;
@@ -25,33 +26,32 @@
       background:var(--bg);
       color:var(--text);
       height: 100%;
-      overflow: hidden; /* Seite selbst nicht scrollen */
-      touch-action: manipulation; /* reduziert Zoom-Gesten teils */
+      overflow: hidden;
+      touch-action: manipulation;
       overscroll-behavior: none;
       -webkit-tap-highlight-color: transparent;
     }
 
-    /* Fix: echte Viewport-Höhe auf Mobile (dvh) */
     .stage{
       position:relative;
-      height: 100dvh; /* dynamische Viewport-Höhe */
+      height: 100dvh;
       width: 100vw;
-      overflow: hidden; /* nur prompter scrollt */
+      overflow: hidden;
       padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     }
 
-    /* Prompter (einziger Scroll-Container) */
     .prompter{
       position: relative;
-      height: 100%;
-      width: 100%;
+      height:100%;
+      width:100%;
       overflow:auto;
       border:1px solid var(--border);
       border-radius: var(--radius);
       background: rgba(17,24,39,.22);
       -webkit-overflow-scrolling: touch;
-      touch-action: pan-y; /* nur vertikal scrollen, kein pinch */
+      touch-action: pan-y;
     }
+
     .marker{
       position: sticky;
       top: 45%;
@@ -61,15 +61,38 @@
       pointer-events:none;
       z-index:2;
     }
+
     .content{
       padding: 16vh 5.5vw 24vh;
-      font-size: 30px; /* Basis, wird per Slider geändert */
+      font-size: 30px;
       line-height: 1.55;
       white-space: pre-wrap;
       word-break: break-word;
     }
 
-    /* Side menu */
+    /* Karaoke word styles */
+    .k-word{
+      padding: 0 .05em;
+      border-radius: .35em;
+      transition: background-color .08s linear, color .08s linear;
+    }
+    .k-spoken{
+      color: rgba(229,231,235,.92);
+      background: rgba(56,189,248,.08);
+      box-shadow: 0 0 0 1px rgba(56,189,248,.06) inset;
+    }
+    .k-active{
+      background: var(--karaokeActiveBg);
+      box-shadow: 0 0 0 2px rgba(56,189,248,.25) inset;
+      outline: 1px solid rgba(56,189,248,.35);
+    }
+    .k-active::after{
+      content:"";
+      display:inline-block;
+      width:.2em;
+    }
+
+    /* Menu */
     .menu{
       position:absolute;
       top: 10px;
@@ -134,12 +157,10 @@
       padding: .8rem;
       outline:none;
       overflow:auto;
-      /* wichtig gegen iOS/Android Auto-Zoom bei Inputs */
-      font-size: 16px;
+      font-size: 16px; /* prevent mobile input zoom */
       touch-action: pan-y;
     }
 
-    /* Collapsed handle */
     .handle{
       position:absolute;
       top: 14px;
@@ -170,7 +191,6 @@
       50%{ transform: scale(1.15); opacity: .75; }
     }
 
-    /* Stage HUD */
     .stageHUD{
       position:absolute;
       right: 14px;
@@ -192,7 +212,6 @@
       font-size: 18px;
     }
 
-    /* Portrait-only hint (optional): wenn Landscape, warnen */
     .rotateWarn{
       position:absolute;
       inset: 0;
@@ -213,9 +232,7 @@
 </head>
 <body>
   <div class="stage" id="stage">
-    <div class="rotateWarn">
-      Bitte Smartphone hochkant halten 📱↕️
-    </div>
+    <div class="rotateWarn">Bitte Smartphone hochkant halten 📱↕️</div>
 
     <div class="handle" id="handle">
       <button id="btnMenuOpen" class="primary">☰</button>
@@ -265,12 +282,13 @@
         <span class="pill">
           <label><input id="stable" type="checkbox" checked /> Stabil Mode</label>
         </span>
+        <span class="pill">
+          <label><input id="karaoke" type="checkbox" checked /> Karaoke</label>
+        </span>
       </div>
 
       <textarea id="text" placeholder="Hier deinen Vortragstext einfügen…"></textarea>
-      <div class="hint">
-        Tipp: Chrome → Mikro zulassen. Stabil Mode startet neu, falls Chrome stoppt.
-      </div>
+      <div class="hint">Stabil Mode startet neu, falls Chrome stoppt. Karaoke markiert deinen aktuellen Wort-Stand.</div>
     </aside>
 
     <div class="stageHUD" id="stageHUD" aria-label="Stage Controls">
@@ -288,13 +306,11 @@
 
 <script>
 (() => {
-  // --- Hard block pinch zoom (best effort) ---
-  // Note: Chrome Android may still allow certain zoom gestures for accessibility.
+  // --- Best-effort block pinch/double-tap zoom ---
   document.addEventListener('gesturestart', (e) => e.preventDefault?.(), { passive: false });
   document.addEventListener('gesturechange', (e) => e.preventDefault?.(), { passive: false });
   document.addEventListener('gestureend', (e) => e.preventDefault?.(), { passive: false });
 
-  // Block double-tap zoom (best effort)
   let lastTouchEnd = 0;
   document.addEventListener('touchend', (e) => {
     const now = Date.now();
@@ -315,6 +331,7 @@
   const elFont  = document.getElementById('font');
   const elSnap  = document.getElementById('snap');
   const elStable = document.getElementById('stable');
+  const elKaraoke = document.getElementById('karaoke');
 
   const btnStart = document.getElementById('btnStart');
   const btnStop  = document.getElementById('btnStop');
@@ -339,11 +356,6 @@
   function setStatus(msg){ elStatus.textContent = msg; }
   function setListening(on){ dot.classList.toggle('live', !!on); }
 
-  // Render
-  function render(){ elContent.textContent = elText.value || "⬅️ Text einfügen…"; }
-  elText.addEventListener('input', render);
-  render();
-
   function applyFont(){ elContent.style.fontSize = elFont.value + "px"; }
   elFont.addEventListener('input', applyFont);
   applyFont();
@@ -359,6 +371,208 @@
   }
   btnMenuCollapse.addEventListener('click', collapseMenu);
   btnMenuOpen.addEventListener('click', openMenu);
+
+  // -------- Karaoke renderer (word-level mapping) --------
+  // We'll build spans for words and track each span's normalized index range
+  let wordMap = [];          // {start,end, el}
+  let activeWordIdx = -1;    // index into wordMap
+  let lastSpokenUpTo = -1;   // last "spoken" word index to avoid full repaint
+
+  function normalize(s){
+    return (s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9äöüß\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function isWordChar(ch){
+    // german-ish word chars
+    return /[A-Za-z0-9ÄÖÜäöüß]/.test(ch);
+  }
+
+  function clearKaraokeClasses(fromIdx=0){
+    for (let i = fromIdx; i < wordMap.length; i++){
+      const el = wordMap[i].el;
+      el.classList.remove('k-spoken','k-active');
+    }
+    activeWordIdx = -1;
+    lastSpokenUpTo = -1;
+  }
+
+  function renderText(){
+    const raw = elText.value || "";
+    wordMap = [];
+    activeWordIdx = -1;
+    lastSpokenUpTo = -1;
+
+    // If karaoke off -> plain text (fast)
+    if (!elKaraoke.checked){
+      elContent.textContent = raw || "⬅️ Text einfügen…";
+      return;
+    }
+
+    // Karaoke ON -> build DOM with word spans
+    elContent.innerHTML = "";
+    if (!raw){
+      elContent.textContent = "⬅️ Text einfügen…";
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+
+    let normPos = 0;
+    let i = 0;
+
+    // split into paragraphs by newline for better layout
+    const lines = raw.split(/\n/);
+    for (let li = 0; li < lines.length; li++){
+      const line = lines[li];
+      const p = document.createElement('div');
+      // keep spacing similar to pre-wrap
+      p.style.whiteSpace = "pre-wrap";
+
+      let j = 0;
+      while (j < line.length){
+        const ch = line[j];
+
+        if (isWordChar(ch)){
+          // read word
+          let w = "";
+          const startNorm = normPos;
+          while (j < line.length && isWordChar(line[j])){
+            w += line[j];
+            j++;
+          }
+          // normalized word length counts as itself
+          const normWord = normalize(w);
+          const endNorm = startNorm + (normWord ? normWord.length : 0);
+
+          // create span
+          const span = document.createElement('span');
+          span.className = "k-word";
+          span.textContent = w;
+
+          // store mapping (only if normWord exists)
+          if (normWord){
+            wordMap.push({ start: startNorm, end: endNorm, el: span });
+            normPos = endNorm;
+          }
+
+          p.appendChild(span);
+          continue;
+        }
+
+        // whitespace/punctuation: render as-is, update normPos appropriately
+        // normalize() turns punctuation into spaces; we count *one* space for any whitespace block
+        if (/\s/.test(ch)){
+          // keep original whitespace
+          let ws = "";
+          while (j < line.length && /\s/.test(line[j])){
+            ws += line[j];
+            j++;
+          }
+          p.appendChild(document.createTextNode(ws));
+          // normalized collapse: ensure single space if there are already words
+          if (wordMap.length > 0){
+            normPos += 1;
+          }
+          continue;
+        } else {
+          // punctuation -> render, in normalized becomes space
+          p.appendChild(document.createTextNode(ch));
+          j++;
+          if (wordMap.length > 0){
+            normPos += 1;
+          }
+          continue;
+        }
+      }
+
+      frag.appendChild(p);
+      if (li !== lines.length - 1){
+        frag.appendChild(document.createTextNode("\n"));
+        if (wordMap.length > 0) normPos += 1; // newline -> space-ish in normalize
+      }
+    }
+
+    elContent.appendChild(frag);
+  }
+
+  elText.addEventListener('input', renderText);
+  elKaraoke.addEventListener('change', () => {
+    renderText();
+  });
+
+  // initial render
+  renderText();
+
+  // Binary search for word containing normalized index
+  function findWordByNormIndex(idx){
+    if (!wordMap.length) return -1;
+    let lo = 0, hi = wordMap.length - 1;
+    while (lo <= hi){
+      const mid = (lo + hi) >> 1;
+      const w = wordMap[mid];
+      if (idx < w.start) hi = mid - 1;
+      else if (idx >= w.end) lo = mid + 1;
+      else return mid;
+    }
+    // if not inside a word, return nearest previous
+    return Math.max(0, Math.min(wordMap.length - 1, hi));
+  }
+
+  function scrollWordIntoView(wordIdx){
+    if (wordIdx < 0 || wordIdx >= wordMap.length) return;
+    const wEl = wordMap[wordIdx].el;
+    if (!wEl?.getBoundingClientRect) return;
+
+    const r = wEl.getBoundingClientRect();
+    const pr = elPrompter.getBoundingClientRect();
+    const current = elPrompter.scrollTop;
+
+    const relTop = (r.top - pr.top) + current;
+    const target = relTop - (elPrompter.clientHeight * 0.40);
+    elPrompter.scrollTop = Math.max(0, target);
+  }
+
+  function updateKaraoke(matchIdxNorm){
+    if (!elKaraoke.checked || !wordMap.length) return;
+
+    const wIdx = findWordByNormIndex(matchIdxNorm);
+    if (wIdx === activeWordIdx) return;
+
+    // remove old active
+    if (activeWordIdx >= 0 && activeWordIdx < wordMap.length){
+      wordMap[activeWordIdx].el.classList.remove('k-active');
+    }
+
+    activeWordIdx = wIdx;
+
+    // mark spoken up to active
+    // only update delta for performance
+    const newSpokenUpTo = Math.max(-1, activeWordIdx - 1);
+
+    if (newSpokenUpTo > lastSpokenUpTo){
+      for (let i = lastSpokenUpTo + 1; i <= newSpokenUpTo; i++){
+        if (i >= 0 && i < wordMap.length) wordMap[i].el.classList.add('k-spoken');
+      }
+    } else if (newSpokenUpTo < lastSpokenUpTo){
+      // if it jumped backwards, clear and repaint
+      clearKaraokeClasses(0);
+      for (let i = 0; i <= newSpokenUpTo; i++){
+        if (i >= 0 && i < wordMap.length) wordMap[i].el.classList.add('k-spoken');
+      }
+    }
+    lastSpokenUpTo = newSpokenUpTo;
+
+    // set active
+    if (activeWordIdx >= 0 && activeWordIdx < wordMap.length){
+      wordMap[activeWordIdx].el.classList.add('k-active');
+      // scroll to active (karaoke view is more accurate than ratio scroll)
+      scrollWordIntoView(activeWordIdx);
+    }
+  }
 
   // Auto-scroll
   let raf = null;
@@ -400,14 +614,6 @@
   let lastMatchIndex = 0;
   let lastHeardAt = 0;
 
-  function normalize(s){
-    return (s || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9äöüß\s]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
   function findBestMatchIndex(textNorm, spoken, fromIdx){
     const sp = normalize(spoken);
     if (!textNorm || !sp) return -1;
@@ -430,16 +636,6 @@
       if (l !== -1) return start + l;
     }
     return textNorm.indexOf(a);
-  }
-
-  function scrollToMatch(rawText, matchIdxNorm){
-    if (matchIdxNorm < 0) return;
-    const norm = normalize(rawText);
-    const ratio = norm.length ? (matchIdxNorm / norm.length) : 0;
-
-    const target = ratio * (elPrompter.scrollHeight - elPrompter.clientHeight);
-    const offset = elPrompter.clientHeight * 0.40;
-    elPrompter.scrollTop = Math.max(0, target - offset);
   }
 
   function clearRestartTimer(){
@@ -526,7 +722,10 @@
       const matchIdx = findBestMatchIndex(textNorm, combined, lastMatchIndex);
       if (matchIdx >= 0){
         lastMatchIndex = matchIdx;
-        if (elSnap.checked) scrollToMatch(rawText, matchIdx);
+
+        // Karaoke highlight + auto-scroll to active word
+        updateKaraoke(matchIdx);
+
         setStatus("🎙️ synchronisiert.");
       } else {
         setStatus("🎙️ höre dich, finde die Stelle nicht – Re-Sync.");
@@ -560,6 +759,7 @@
     }
   }
 
+  // Heartbeat (avoid dead states)
   setInterval(() => {
     if (!shouldRestart || !elStable.checked) return;
     if (!rec) return;
@@ -580,6 +780,11 @@
     const ratio = elPrompter.scrollTop / Math.max(1, (elPrompter.scrollHeight - elPrompter.clientHeight));
     lastMatchIndex = Math.floor(ratio * normalize(raw).length);
     setStatus("🔁 Re-Sync gesetzt.");
+
+    // also reset karaoke to new scroll position (best-effort)
+    if (elKaraoke.checked){
+      updateKaraoke(lastMatchIndex);
+    }
   });
 
   // Fullscreen
