@@ -1,272 +1,795 @@
 <!doctype html>
 <html lang="de">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-<title>Prompter (Optimized Teleprompter Mode)</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Prompter (Stabil + Stage + Smooth + Karaoke)</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#111827; --text:#e5e7eb; --muted:#94a3b8;
+      --accent:#38bdf8; --border: rgba(148,163,184,.22); --radius:16px;
+      --menuW: 360px;
+    }
+    *{ box-sizing:border-box; }
 
-<style>
-:root{
-  --bg:#0b0f14;
-  --panel:#111827;
-  --text:#e5e7eb;
-  --muted:#94a3b8;
-  --accent:#38bdf8;
-  --border: rgba(148,163,184,.22);
-  --radius:16px;
-}
-*{box-sizing:border-box;}
+    html{
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+      height: 100%;
+    }
+    body{
+      margin:0;
+      font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      background:var(--bg);
+      color:var(--text);
+      height: 100%;
+      overflow: hidden;
+      touch-action: manipulation;
+      overscroll-behavior: none;
+      -webkit-tap-highlight-color: transparent;
+    }
 
-html{
-  height:100%;
-  -webkit-text-size-adjust:100%;
-}
+    .stage{
+      position:relative;
+      height: 100dvh;
+      width: 100vw;
+      overflow: hidden;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
 
-body{
-  margin:0;
-  font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
-  background:var(--bg);
-  color:var(--text);
-  height:100%;
-  overflow:hidden;
-  touch-action:manipulation;
-}
+    /* Prompter */
+    .prompter{
+      position: relative;
+      height:100%;
+      width:100%;
+      overflow:auto;
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      background: rgba(17,24,39,.22);
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+    }
+    .marker{
+      position: sticky;
+      top: 45%;
+      height: 0;
+      border-top: 2px solid rgba(56,189,248,.55);
+      margin: 0 1rem;
+      pointer-events:none;
+      z-index:2;
+    }
+    .content{
+      padding: 16vh 5.5vw 24vh;
+      font-size: 30px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
 
-.stage{
-  height:100dvh;
-  width:100vw;
-  overflow:hidden;
-  position:relative;
-  padding:env(safe-area-inset-top)
-          env(safe-area-inset-right)
-          env(safe-area-inset-bottom)
-          env(safe-area-inset-left);
-}
+    /* Karaoke highlight */
+    mark.kara{
+      background: rgba(56,189,248,.18);
+      color: var(--text);
+      padding: 0 .12em;
+      border-radius: .25em;
+      box-shadow: 0 0 0 1px rgba(56,189,248,.15) inset;
+    }
 
-/* ===== PROMPTER ===== */
-.prompter{
-  height:100%;
-  width:100%;
-  overflow:auto;
-  border:1px solid var(--border);
-  border-radius:var(--radius);
-  background:rgba(17,24,39,.22);
-  -webkit-overflow-scrolling:touch;
-}
+    /* Menu */
+    .menu{
+      position:absolute;
+      top: 10px;
+      left: 10px;
+      bottom: 10px;
+      width: min(var(--menuW), calc(100vw - 20px));
+      background: rgba(17,24,39,.92);
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      display:flex;
+      flex-direction:column;
+      gap: 10px;
+      z-index:10;
+      transform: translateX(0);
+      transition: transform .2s ease;
+      max-height: calc(100% - 20px);
+      overflow: hidden;
+    }
+    .menu.is-collapsed{ transform: translateX(calc(-100% - 16px)); }
 
-.marker{
-  position:sticky;
-  top:45%;
-  border-top:2px solid rgba(56,189,248,.6);
-  margin:0 1rem;
-  z-index:2;
-}
+    .menuHeader{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      padding-bottom:8px;
+      border-bottom:1px solid var(--border);
+    }
+    .title{ font-weight:700; font-size:14px; }
+    .status{ color: var(--muted); font-size:12.5px; margin-top:4px; }
 
-.content{
-  padding:18vh 6vw 28vh;
-  font-size:clamp(32px,5vw,50px);
-  line-height:1.55;
-  white-space:pre-wrap;
-  word-break:break-word;
-}
+    .row{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 
-/* ===== MENU ===== */
-.menu{
-  position:absolute;
-  top:10px;
-  left:10px;
-  bottom:10px;
-  width:90%;
-  max-width:380px;
-  background:rgba(17,24,39,.92);
-  border:1px solid var(--border);
-  border-radius:var(--radius);
-  padding:12px;
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-  z-index:10;
-  transition:.25s;
-}
-.menu.is-collapsed{transform:translateX(-110%);}
+    button, textarea, input{ font:inherit; color:var(--text); }
+    button{
+      border:1px solid var(--border);
+      background: rgba(17,24,39,.95);
+      padding: .55rem .75rem;
+      border-radius: 14px;
+      cursor:pointer;
+      user-select:none;
+      touch-action: manipulation;
+    }
+    button.primary{ border-color: rgba(56,189,248,.45); }
+    button:disabled{ opacity:.55; cursor:not-allowed; }
 
-button{
-  border:1px solid var(--border);
-  background:rgba(17,24,39,.95);
-  padding:.6rem .8rem;
-  border-radius:14px;
-  color:var(--text);
-}
+    .pill{
+      display:flex; align-items:center; gap:.5rem;
+      padding:.4rem .6rem; border-radius:999px; border:1px solid var(--border);
+      background: rgba(17,24,39,.75);
+    }
+    .pill label{ color:var(--muted); font-size:.85rem; white-space:nowrap; }
+    .pill input[type="range"]{ width: 150px; }
 
-textarea{
-  width:100%;
-  min-height:120px;
-  background:rgba(17,24,39,.65);
-  border:1px solid var(--border);
-  border-radius:14px;
-  padding:.8rem;
-  font-size:16px;
-  color:var(--text);
-}
+    textarea{
+      width:100%;
+      min-height: 120px;
+      background: rgba(17,24,39,.65);
+      border:1px solid var(--border);
+      border-radius: 14px;
+      padding: .8rem;
+      outline:none;
+      overflow:auto;
+      font-size: 16px; /* verhindert Input Auto-Zoom */
+      touch-action: pan-y;
+    }
 
-/* ===== STAGE HUD ===== */
-.stageHUD{
-  position:absolute;
-  right:14px;
-  bottom:14px;
-  display:none;
-  gap:12px;
-  padding:12px;
-  border-radius:999px;
-  background:rgba(17,24,39,.88);
-  border:1px solid var(--border);
-  z-index:50;
-}
-.stageHUD button{
-  width:68px;
-  height:68px;
-  border-radius:999px;
-  font-size:22px;
-}
+    /* Collapsed handle */
+    .handle{
+      position:absolute;
+      top: 14px;
+      left: 14px;
+      z-index: 20;
+      display:none;
+      gap: 8px;
+    }
+    .handle button{ border-radius:999px; padding:.55rem .7rem; }
 
-.dot{
-  width:10px;
-  height:10px;
-  border-radius:50%;
-  display:inline-block;
-  margin-right:6px;
-  background:#666;
-}
-.dot.live{
-  background:var(--accent);
-  box-shadow:0 0 0 4px rgba(56,189,248,.18);
-}
+    .hint{ color:var(--muted); font-size:12.5px; line-height:1.35; }
 
-.status{font-size:13px;color:var(--muted);}
-</style>
+    /* Listening indicator */
+    .dot{
+      width: 10px; height: 10px; border-radius: 999px;
+      background: rgba(148,163,184,.35);
+      display:inline-block;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .dot.live{
+      background: var(--accent);
+      box-shadow: 0 0 0 4px rgba(56,189,248,.15);
+      animation: pulse 1.1s ease-in-out infinite;
+    }
+    @keyframes pulse{
+      0%,100%{ transform: scale(1); opacity: 1; }
+      50%{ transform: scale(1.15); opacity: .75; }
+    }
+
+    /* Stage HUD */
+    .stageHUD{
+      position:absolute;
+      right: 14px;
+      bottom: 14px;
+      z-index: 50;
+      display:none;
+      gap: 10px;
+      padding: 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(17,24,39,.88);
+      touch-action: manipulation;
+    }
+    .stageHUD button{
+      width: 54px;
+      height: 54px;
+      border-radius: 999px;
+      padding: 0;
+      font-size: 18px;
+    }
+
+    /* Portrait hint */
+    .rotateWarn{
+      position:absolute;
+      inset: 0;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      text-align:center;
+      padding: 24px;
+      background: rgba(0,0,0,.72);
+      z-index: 100;
+      color: var(--text);
+      font-size: 18px;
+    }
+    @media (orientation: landscape){
+      .rotateWarn{ display:flex; }
+    }
+  </style>
 </head>
 
 <body>
-<div class="stage">
+  <div class="stage" id="stage">
+    <div class="rotateWarn">Bitte Smartphone hochkant halten 📱↕️</div>
 
-  <aside class="menu" id="menu">
-    <div><span class="dot" id="dot"></span>Prompter</div>
-    <div class="status" id="status">Bereit.</div>
+    <div class="handle" id="handle">
+      <button id="btnMenuOpen" class="primary">☰</button>
+      <button id="btnFullscreen2">⛶</button>
+    </div>
 
-    <button id="btnStart">🎙️ Voice-Follow</button>
-    <button id="btnStop">⏹ Stop</button>
-    <button id="btnStage">🎬 Stage</button>
+    <aside class="menu" id="menu">
+      <div class="menuHeader">
+        <div>
+          <div class="title"><span class="dot" id="dot"></span>Prompter</div>
+          <div class="status" id="status">Bereit. Text einfügen → Voice-Follow starten.</div>
+        </div>
+        <button id="btnMenuCollapse" title="Menü einklappen">⟨</button>
+      </div>
 
-    <textarea id="text" placeholder="Vortragstext einfügen..."></textarea>
-  </aside>
+      <div class="row">
+        <button id="btnStart" class="primary">🎙️ Voice-Follow</button>
+        <button id="btnStop">⏹️ Stop</button>
+        <button id="btnResync">🔁 Re-Sync</button>
+      </div>
 
-  <div class="stageHUD" id="stageHUD">
-    <button id="hudVoice">🎙</button>
-    <button id="hudFull">⛶</button>
-    <button id="hudMenu">☰</button>
+      <div class="row">
+        <button id="btnScroll" class="primary">▶️ Auto-Scroll</button>
+        <button id="btnScrollStop">⏸️ Pause</button>
+        <button id="btnFullscreen" class="primary">⛶ Vollbild</button>
+        <button id="btnStage" class="primary">🎬 Stage</button>
+      </div>
+
+      <div class="row">
+        <span class="pill">
+          <label>Speed</label>
+          <input id="speed" type="range" min="0" max="100" value="22" />
+        </span>
+        <span class="pill">
+          <label>Schrift</label>
+          <input id="font" type="range" min="18" max="60" value="34" />
+        </span>
+      </div>
+
+      <div class="row">
+        <span class="pill">
+          <label><input id="snap" type="checkbox" checked /> Jump-to-match</label>
+        </span>
+        <span class="pill">
+          <label><input id="stable" type="checkbox" checked /> Stabil Mode</label>
+        </span>
+      </div>
+
+      <div class="row">
+        <span class="pill">
+          <label><input id="karaoke" type="checkbox" checked /> Karaoke</label>
+        </span>
+        <span class="pill">
+          <label>Vorlauf</label>
+          <input id="lead" type="range" min="0" max="6" value="2" />
+          <span style="color:var(--muted); font-size:.85rem;" id="leadLabel">0.02</span>
+        </span>
+      </div>
+
+      <div class="row">
+        <span class="pill">
+          <label>Position</label>
+          <input id="pos" type="range" min="30" max="75" value="45" />
+          <span style="color:var(--muted); font-size:.85rem;" id="posLabel">0.45</span>
+        </span>
+      </div>
+
+      <textarea id="text" placeholder="Hier deinen Vortragstext einfügen…"></textarea>
+      <div class="hint">Tipp: Für App-Feeling: Chrome → „Zum Startbildschirm hinzufügen“.</div>
+    </aside>
+
+    <div class="stageHUD" id="stageHUD" aria-label="Stage Controls">
+      <button id="hudVoice" class="primary" title="Voice an/aus">🎙</button>
+      <button id="hudPause" title="Auto-Scroll an/aus">⏸</button>
+      <button id="hudFull" class="primary" title="Vollbild">⛶</button>
+      <button id="hudMenu" title="Menü">☰</button>
+    </div>
+
+    <main class="prompter" id="prompter" aria-label="Teleprompter">
+      <div class="marker"></div>
+      <div class="content" id="content"></div>
+    </main>
   </div>
 
-  <main class="prompter" id="prompter">
-    <div class="marker"></div>
-    <div class="content" id="content"></div>
-  </main>
-
-</div>
-
 <script>
-const elText=document.getElementById('text');
-const elContent=document.getElementById('content');
-const elPrompter=document.getElementById('prompter');
-const dot=document.getElementById('dot');
-const menu=document.getElementById('menu');
-const stageHUD=document.getElementById('stageHUD');
-const status=document.getElementById('status');
+(() => {
+  // --- Best-effort: block gesture zoom + double tap zoom ---
+  document.addEventListener('gesturestart', (e) => e.preventDefault?.(), { passive: false });
+  document.addEventListener('gesturechange', (e) => e.preventDefault?.(), { passive: false });
+  document.addEventListener('gestureend', (e) => e.preventDefault?.(), { passive: false });
 
-const btnStart=document.getElementById('btnStart');
-const btnStop=document.getElementById('btnStop');
-const btnStage=document.getElementById('btnStage');
-const hudVoice=document.getElementById('hudVoice');
-const hudFull=document.getElementById('hudFull');
-const hudMenu=document.getElementById('hudMenu');
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTouchEnd <= 300) e.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
 
-elText.addEventListener('input',()=>elContent.textContent=elText.value);
-elContent.textContent="⬅️ Text einfügen...";
+  // Elements
+  const menu = document.getElementById('menu');
+  const handle = document.getElementById('handle');
+  const elText = document.getElementById('text');
+  const elContent = document.getElementById('content');
+  const elPrompter = document.getElementById('prompter');
+  const elStatus = document.getElementById('status');
+  const dot = document.getElementById('dot');
 
-/* ===== TELEPROMPTER LOGIK ===== */
+  const elSpeed = document.getElementById('speed');
+  const elFont  = document.getElementById('font');
+  const elSnap  = document.getElementById('snap');
+  const elStable = document.getElementById('stable');
+  const elKara = document.getElementById('karaoke');
+  const elLead = document.getElementById('lead');
+  const leadLabel = document.getElementById('leadLabel');
+  const elPos = document.getElementById('pos');
+  const posLabel = document.getElementById('posLabel');
 
-function normalize(s){
-  return s.toLowerCase().replace(/[^a-z0-9äöüß\s]/g,'').replace(/\s+/g,' ').trim();
-}
+  const btnStart = document.getElementById('btnStart');
+  const btnStop  = document.getElementById('btnStop');
+  const btnScroll = document.getElementById('btnScroll');
+  const btnScrollStop = document.getElementById('btnScrollStop');
+  const btnResync = document.getElementById('btnResync');
 
-function scrollToMatch(rawText,matchIdxNorm){
-  if(matchIdxNorm<0)return;
+  const btnFullscreen = document.getElementById('btnFullscreen');
+  const btnFullscreen2 = document.getElementById('btnFullscreen2');
 
-  const norm=normalize(rawText);
+  const btnMenuCollapse = document.getElementById('btnMenuCollapse');
+  const btnMenuOpen = document.getElementById('btnMenuOpen');
 
-  // ✅ VORLAUF 0.03
-  const lead=Math.floor(norm.length*0.03);
-  const idx=Math.min(norm.length,matchIdxNorm+lead);
-  const ratio=norm.length?idx/norm.length:0;
+  const btnStage = document.getElementById('btnStage');
+  const stageHUD = document.getElementById('stageHUD');
+  const hudVoice = document.getElementById('hudVoice');
+  const hudPause = document.getElementById('hudPause');
+  const hudFull  = document.getElementById('hudFull');
+  const hudMenu  = document.getElementById('hudMenu');
 
-  const maxScroll=elPrompter.scrollHeight-elPrompter.clientHeight;
+  // Helpers
+  function setStatus(msg){ elStatus.textContent = msg; }
+  function setListening(on){ dot.classList.toggle('live', !!on); }
 
-  // ✅ Position 0.45 (leicht über Mitte)
-  const desiredViewportPosition=0.45;
-  const offset=elPrompter.clientHeight*desiredViewportPosition;
-  const target=ratio*maxScroll;
+  function escapeHTML(s){
+    return (s || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  }
 
-  elPrompter.scrollTop=Math.max(0,target-offset);
-}
+  function normalize(s){
+    return (s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9äöüß\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
 
-/* ===== STAGE MODE ===== */
-let stageMode=false;
-btnStage.onclick=()=>{
-  stageMode=!stageMode;
-  stageHUD.style.display=stageMode?'flex':'none';
-  menu.classList.toggle('is-collapsed',stageMode);
-};
+  // Karaoke state
+  let karaStart = -1; // index in raw text (best effort)
+  let karaLen = 0;
 
-hudMenu.onclick=()=>menu.classList.toggle('is-collapsed');
-hudFull.onclick=()=>document.documentElement.requestFullscreen();
+  function renderContent(){
+    const raw = elText.value || "";
+    if (!raw) { elContent.textContent = "⬅️ Text einfügen…"; return; }
 
-/* ===== SPEECH ===== */
-const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
-let rec;
-
-btnStart.onclick=()=>{
-  if(!SpeechRecognition)return alert("Chrome verwenden");
-  rec=new SpeechRecognition();
-  rec.lang="de-DE";
-  rec.continuous=true;
-  rec.interimResults=true;
-
-  rec.onstart=()=>{
-    dot.classList.add("live");
-    status.textContent="🎙️ läuft...";
-  };
-
-  rec.onresult=(ev)=>{
-    let combined="";
-    for(let i=ev.resultIndex;i<ev.results.length;i++){
-      combined+=ev.results[i][0].transcript+" ";
+    if (!elKara.checked || karaStart < 0 || karaLen <= 0){
+      elContent.textContent = raw;
+      return;
     }
-    const raw=elText.value;
-    const textNorm=normalize(raw);
-    const match=textNorm.indexOf(normalize(combined.trim()));
-    if(match>=0)scrollToMatch(raw,match);
-  };
 
-  rec.onend=()=>{
-    dot.classList.remove("live");
-    status.textContent="Beendet.";
-  };
+    // Best-effort highlight by raw indices (may be slightly off with normalization)
+    const start = Math.max(0, Math.min(raw.length, karaStart));
+    const end = Math.max(start, Math.min(raw.length, start + karaLen));
 
-  rec.start();
-};
+    const a = escapeHTML(raw.slice(0, start));
+    const b = escapeHTML(raw.slice(start, end));
+    const c = escapeHTML(raw.slice(end));
 
-btnStop.onclick=()=>rec&&rec.stop();
-hudVoice.onclick=()=>rec?rec.stop():btnStart.click();
+    elContent.innerHTML = `${a}<mark class="kara">${b}</mark>${c}`;
+  }
 
+  // Render on input
+  elText.addEventListener('input', () => {
+    karaStart = -1; karaLen = 0;
+    renderContent();
+  });
+  renderContent();
+
+  // Font size
+  function applyFont(){ elContent.style.fontSize = elFont.value + "px"; }
+  elFont.addEventListener('input', applyFont);
+  applyFont();
+
+  // Lead/Position sliders
+  function leadValue(){
+    // 0..6 -> 0.00..0.06
+    const v = Number(elLead.value) / 100;
+    leadLabel.textContent = v.toFixed(2);
+    return v;
+  }
+  elLead.addEventListener('input', leadValue);
+  leadValue();
+
+  function posValue(){
+    const v = Number(elPos.value) / 100;
+    posLabel.textContent = v.toFixed(2);
+    return v;
+  }
+  elPos.addEventListener('input', posValue);
+  posValue();
+
+  // Menu collapse / expand
+  function collapseMenu(){
+    menu.classList.add('is-collapsed');
+    handle.style.display = 'flex';
+  }
+  function openMenu(){
+    menu.classList.remove('is-collapsed');
+    handle.style.display = 'none';
+  }
+  btnMenuCollapse.addEventListener('click', collapseMenu);
+  btnMenuOpen.addEventListener('click', openMenu);
+
+  // Auto-scroll (manual)
+  let raf = null;
+  let autoScrollOn = false;
+
+  function tick(){
+    if (!autoScrollOn) return;
+    const v = Number(elSpeed.value);
+    const pxPerSec = (v * v) / 60;
+    elPrompter.scrollTop += pxPerSec / 60;
+    raf = requestAnimationFrame(tick);
+  }
+
+  function startAutoScroll(){
+    autoScrollOn = true;
+    if (!raf) raf = requestAnimationFrame(tick);
+    setStatus("Auto-Scroll läuft.");
+  }
+  function stopAutoScroll(){
+    autoScrollOn = false;
+    if (raf) cancelAnimationFrame(raf);
+    raf = null;
+    setStatus("Auto-Scroll pausiert.");
+  }
+
+  btnScroll.addEventListener('click', startAutoScroll);
+  btnScrollStop.addEventListener('click', stopAutoScroll);
+
+  // Smooth scrolling engine (lerp)
+  let targetScrollTop = null;
+  let smoothRaf = null;
+
+  function smoothTo(top){
+    top = Math.max(0, top);
+    targetScrollTop = top;
+    if (smoothRaf) return;
+
+    const step = () => {
+      smoothRaf = null;
+      if (targetScrollTop === null) return;
+
+      const current = elPrompter.scrollTop;
+      const diff = targetScrollTop - current;
+
+      // close enough
+      if (Math.abs(diff) < 0.8){
+        elPrompter.scrollTop = targetScrollTop;
+        targetScrollTop = null;
+        return;
+      }
+
+      // Lerp speed: 0.18 = smooth glide
+      elPrompter.scrollTop = current + diff * 0.18;
+      smoothRaf = requestAnimationFrame(step);
+    };
+
+    smoothRaf = requestAnimationFrame(step);
+  }
+
+  // Matching helpers
+  function findBestMatchIndex(textNorm, spoken, fromIdx){
+    const sp = normalize(spoken);
+    if (!textNorm || !sp) return -1;
+
+    const words = sp.split(" ").filter(Boolean);
+    const anchor = words.slice(-6).join(" ");
+    const a = anchor.length >= 8 ? anchor : sp;
+
+    const start = Math.max(0, fromIdx - 900);
+    const end = Math.min(textNorm.length, fromIdx + 4200);
+    const slice = textNorm.slice(start, end);
+
+    const local = slice.indexOf(a);
+    if (local !== -1) return start + local;
+
+    for (let k = 5; k >= 3; k--){
+      const t = words.slice(-k).join(" ");
+      if (t.length < 8) continue;
+      const l = slice.indexOf(t);
+      if (l !== -1) return start + l;
+    }
+
+    return textNorm.indexOf(a);
+  }
+
+  // Map normalized index to approximate raw index (best effort)
+  function approxRawIndexFromNorm(raw, normIdx){
+    // Build a mapping by scanning raw and constructing normalized stream with index map
+    // This is "best effort" and light-weight enough for mobile.
+    let map = []; // normIndex -> rawIndex
+    let n = 0;
+    let prevWasSpace = true;
+
+    for (let i = 0; i < raw.length; i++){
+      const ch = raw[i].toLowerCase();
+      const isWord =
+        (ch >= 'a' && ch <= 'z') ||
+        (ch >= '0' && ch <= '9') ||
+        ch === 'ä' || ch === 'ö' || ch === 'ü' || ch === 'ß';
+
+      if (isWord){
+        map[n] = i;
+        n++;
+        prevWasSpace = false;
+      } else if (!prevWasSpace) {
+        // normalize non-word run to single space
+        map[n] = i;
+        n++;
+        prevWasSpace = true;
+      }
+      if (n > normIdx + 500) break; // stop early if far ahead
+    }
+    if (normIdx < 0) return 0;
+    if (normIdx >= map.length) return raw.length;
+    return map[normIdx] ?? raw.length;
+  }
+
+  // ✅ ScrollToMatch: smooth glide + lead + position
+  function scrollToMatch(rawText, matchIdxNorm){
+    if (matchIdxNorm < 0) return;
+
+    const norm = normalize(rawText);
+    const lead = Math.floor(norm.length * leadValue());     // e.g. 0.02
+    const idx = Math.min(norm.length, matchIdxNorm + lead);
+    const ratio = norm.length ? (idx / norm.length) : 0;
+
+    const maxScroll = elPrompter.scrollHeight - elPrompter.clientHeight;
+    const desiredViewportPosition = posValue();             // e.g. 0.45
+    const offset = elPrompter.clientHeight * desiredViewportPosition;
+
+    const target = ratio * maxScroll;
+    const top = Math.max(0, target - offset);
+
+    // Smooth glide instead of jump
+    smoothTo(top);
+  }
+
+  // Voice-follow (stabil)
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null;
+
+  let shouldRestart = false;
+  let restartTimer = null;
+  let restartDelay = 350;
+  const restartDelayMax = 5000;
+
+  let lastTranscript = "";
+  let lastMatchIndex = 0;
+  let lastHeardAt = 0;
+
+  function clearRestartTimer(){
+    if (restartTimer) clearTimeout(restartTimer);
+    restartTimer = null;
+  }
+
+  function scheduleRestart(reason){
+    clearRestartTimer();
+    if (!shouldRestart || !elStable.checked) return;
+
+    setListening(false);
+    setStatus(`⚠️ Voice-Follow beendet (${reason}) – starte neu…`);
+
+    restartTimer = setTimeout(() => {
+      restartTimer = null;
+      tryStartRecognition();
+    }, restartDelay);
+
+    restartDelay = Math.min(restartDelayMax, Math.floor(restartDelay * 1.35));
+  }
+
+  function resetBackoff(){ restartDelay = 350; }
+
+  function buildRecognition(){
+    const r = new SpeechRecognition();
+    r.lang = "de-DE";
+    r.continuous = true;
+    r.interimResults = true;
+    return r;
+  }
+
+  function tryStartRecognition(){
+    if (!SpeechRecognition){
+      setStatus("❌ SpeechRecognition nicht verfügbar. Öffne in Chrome.");
+      return;
+    }
+    if (!shouldRestart) return;
+
+    if (rec){
+      try { rec.onend = null; rec.onerror = null; rec.onresult = null; } catch(e){}
+      rec = null;
+    }
+
+    rec = buildRecognition();
+
+    rec.onstart = () => {
+      resetBackoff();
+      setListening(true);
+      setStatus("🎙️ Voice-Follow aktiv (Stabil Mode).");
+    };
+
+    rec.onerror = (e) => {
+      const err = (e && e.error) ? e.error : "unknown";
+      if (err === "not-allowed" || err === "service-not-allowed"){
+        shouldRestart = false;
+        setListening(false);
+        setStatus("❌ Mikro nicht erlaubt. Chrome → Website-Einstellungen → Mikro erlauben.");
+        try { rec.stop(); } catch(_) {}
+        rec = null;
+        return;
+      }
+      scheduleRestart(err);
+    };
+
+    rec.onend = () => scheduleRestart("end");
+
+    rec.onresult = (ev) => {
+      let interim = "", finalTxt = "";
+      for (let i = ev.resultIndex; i < ev.results.length; i++){
+        const rr = ev.results[i];
+        if (rr.isFinal) finalTxt += rr[0].transcript + " ";
+        else interim += rr[0].transcript + " ";
+      }
+
+      const combined = (finalTxt + interim).trim();
+      if (!combined || combined === lastTranscript) return;
+
+      lastTranscript = combined;
+      lastHeardAt = Date.now();
+
+      const rawText = elText.value || "";
+      const textNorm = normalize(rawText);
+
+      const matchIdx = findBestMatchIndex(textNorm, combined, lastMatchIndex);
+
+      if (matchIdx >= 0){
+        lastMatchIndex = matchIdx;
+
+        // Karaoke: highlight approximate raw section of last phrase
+        if (elKara.checked){
+          const normSpoken = normalize(combined);
+          const phraseLen = Math.min(220, Math.max(20, normSpoken.length));
+          const startRaw = approxRawIndexFromNorm(rawText, matchIdx);
+          const endRaw = approxRawIndexFromNorm(rawText, Math.min(textNorm.length, matchIdx + phraseLen));
+          karaStart = startRaw;
+          karaLen = Math.max(8, endRaw - startRaw);
+          renderContent();
+        }
+
+        if (elSnap.checked) scrollToMatch(rawText, matchIdx);
+        setStatus("🎙️ synchronisiert.");
+      } else {
+        setStatus("🎙️ höre dich, finde die Stelle nicht – Re-Sync.");
+      }
+    };
+
+    try{ rec.start(); }
+    catch(e){ scheduleRestart("start-failed"); }
+  }
+
+  function startRec(){
+    if (!SpeechRecognition){
+      setStatus("❌ SpeechRecognition nicht verfügbar. Öffne in Chrome.");
+      return;
+    }
+    shouldRestart = true;
+    clearRestartTimer();
+    resetBackoff();
+    setStatus("🎙️ Starte Voice-Follow…");
+    tryStartRecognition();
+  }
+
+  function stopRec(){
+    shouldRestart = false;
+    clearRestartTimer();
+    setListening(false);
+    setStatus("⏹️ Voice-Follow gestoppt.");
+    if (rec){
+      try { rec.stop(); } catch(e){}
+      rec = null;
+    }
+  }
+
+  // Heartbeat
+  setInterval(() => {
+    if (!shouldRestart || !elStable.checked) return;
+    if (!rec) return;
+    const now = Date.now();
+    if (lastHeardAt && (now - lastHeardAt) > 35000){
+      scheduleRestart("idle");
+      try { rec.stop(); } catch(e){}
+      rec = null;
+      lastHeardAt = now;
+    }
+  }, 5000);
+
+  btnStart.addEventListener('click', startRec);
+  btnStop.addEventListener('click', stopRec);
+
+  btnResync.addEventListener('click', () => {
+    const raw = elText.value || "";
+    const ratio = elPrompter.scrollTop / Math.max(1, (elPrompter.scrollHeight - elPrompter.clientHeight));
+    lastMatchIndex = Math.floor(ratio * normalize(raw).length);
+    setStatus("🔁 Re-Sync gesetzt.");
+  });
+
+  // Fullscreen
+  async function toggleFullscreen(){
+    try{
+      if (!document.fullscreenElement){
+        await document.documentElement.requestFullscreen();
+        setStatus("⛶ Vollbild aktiv.");
+      } else {
+        await document.exitFullscreen();
+        setStatus("Vollbild beendet.");
+      }
+    } catch(e){
+      setStatus("⚠️ Vollbild nicht möglich: " + e.message);
+    }
+  }
+  btnFullscreen.addEventListener('click', toggleFullscreen);
+  btnFullscreen2.addEventListener('click', toggleFullscreen);
+
+  // Stage Mode
+  let stageMode = false;
+  function setStageMode(on){
+    stageMode = !!on;
+    stageHUD.style.display = stageMode ? 'flex' : 'none';
+    if (stageMode){
+      collapseMenu();
+      setStatus("🎬 Stage Mode aktiv.");
+    } else {
+      openMenu();
+      setStatus("Stage Mode aus.");
+    }
+  }
+  btnStage.addEventListener('click', () => setStageMode(!stageMode));
+
+  // HUD actions
+  hudVoice.addEventListener('click', () => { if (shouldRestart) stopRec(); else startRec(); });
+  hudPause.addEventListener('click', () => { if (autoScrollOn) stopAutoScroll(); else startAutoScroll(); });
+  hudFull.addEventListener('click', () => toggleFullscreen());
+  hudMenu.addEventListener('click', () => { if (menu.classList.contains('is-collapsed')) openMenu(); else collapseMenu(); });
+
+  // Tap on prompter toggles menu in Stage Mode
+  elPrompter.addEventListener('click', () => {
+    if (!stageMode) return;
+    if (menu.classList.contains('is-collapsed')) openMenu();
+    else collapseMenu();
+  });
+})();
 </script>
 </body>
 </html>
