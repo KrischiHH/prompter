@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Prompter (Stabil Mode)</title>
+  <title>Prompter (Stabil + Stage Mode)</title>
   <style>
     :root{
       --bg:#0b0f14; --panel:#111827; --text:#e5e7eb; --muted:#94a3b8;
@@ -12,10 +12,20 @@
     }
     *{ box-sizing:border-box; }
     html,body{ height:100%; }
-    body{ margin:0; font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial; background:var(--bg); color:var(--text); }
+    body{
+      margin:0;
+      font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      background:var(--bg);
+      color:var(--text);
+    }
 
-    .stage{ position:relative; height:100%; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+    .stage{
+      position:relative;
+      height:100%;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
 
+    /* Prompter */
     .prompter{
       height:100%;
       overflow:auto;
@@ -40,6 +50,7 @@
       white-space: pre-wrap;
     }
 
+    /* Side menu */
     .menu{
       position:absolute;
       top: 10px;
@@ -59,7 +70,14 @@
     }
     .menu.is-collapsed{ transform: translateX(calc(-100% - 16px)); }
 
-    .menuHeader{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+    .menuHeader{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      padding-bottom:8px;
+      border-bottom:1px solid var(--border);
+    }
     .title{ font-weight:700; font-size:14px; }
     .status{ color: var(--muted); font-size:12.5px; margin-top:4px; }
 
@@ -95,6 +113,7 @@
       outline:none;
     }
 
+    /* Collapsed handle (top-left) */
     .handle{
       position:absolute;
       top: 14px;
@@ -123,6 +142,27 @@
     @keyframes pulse{
       0%,100%{ transform: scale(1); opacity: 1; }
       50%{ transform: scale(1.15); opacity: .75; }
+    }
+
+    /* Stage HUD (floating controls) */
+    .stageHUD{
+      position:absolute;
+      right: 14px;
+      bottom: 14px;
+      z-index: 50;
+      display:none;
+      gap: 10px;
+      padding: 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(17,24,39,.88);
+    }
+    .stageHUD button{
+      width: 54px;
+      height: 54px;
+      border-radius: 999px;
+      padding: 0;
+      font-size: 18px;
     }
   </style>
 </head>
@@ -155,6 +195,7 @@
         <button id="btnScroll" class="primary">▶️ Auto-Scroll</button>
         <button id="btnScrollStop">⏸️ Pause</button>
         <button id="btnFullscreen" class="primary">⛶ Vollbild</button>
+        <button id="btnStage" class="primary">🎬 Stage</button>
       </div>
 
       <div class="row">
@@ -179,11 +220,19 @@
 
       <textarea id="text" placeholder="Hier deinen Vortragstext einfügen…"></textarea>
       <div class="hint">
-        Tipp: Chrome → Mikro zulassen. Stabil Mode startet automatisch neu, falls Chrome stoppt.
+        Tipp: Chrome → Mikro zulassen. Stabil Mode startet neu, falls Chrome stoppt.
       </div>
     </aside>
 
-    <main class="prompter" id="prompter">
+    <!-- Stage HUD -->
+    <div class="stageHUD" id="stageHUD" aria-label="Stage Controls">
+      <button id="hudVoice" class="primary" title="Voice an/aus">🎙</button>
+      <button id="hudPause" title="Auto-Scroll an/aus">⏸</button>
+      <button id="hudFull" class="primary" title="Vollbild">⛶</button>
+      <button id="hudMenu" title="Menü">☰</button>
+    </div>
+
+    <main class="prompter" id="prompter" aria-label="Teleprompter">
       <div class="marker"></div>
       <div class="content" id="content"></div>
     </main>
@@ -191,6 +240,7 @@
 
 <script>
 (() => {
+  // Elements
   const menu = document.getElementById('menu');
   const handle = document.getElementById('handle');
   const elText = document.getElementById('text');
@@ -216,21 +266,23 @@
   const btnMenuCollapse = document.getElementById('btnMenuCollapse');
   const btnMenuOpen = document.getElementById('btnMenuOpen');
 
+  const btnStage = document.getElementById('btnStage');
+  const stageHUD = document.getElementById('stageHUD');
+  const hudVoice = document.getElementById('hudVoice');
+  const hudPause = document.getElementById('hudPause');
+  const hudFull  = document.getElementById('hudFull');
+  const hudMenu  = document.getElementById('hudMenu');
+
+  // Helpers
   function setStatus(msg){ elStatus.textContent = msg; }
-  function setListening(on){
-    dot.classList.toggle('live', !!on);
-  }
+  function setListening(on){ dot.classList.toggle('live', !!on); }
 
   // Render
-  function render(){
-    elContent.textContent = elText.value || "⬅️ Text einfügen…";
-  }
+  function render(){ elContent.textContent = elText.value || "⬅️ Text einfügen…"; }
   elText.addEventListener('input', render);
   render();
 
-  function applyFont(){
-    elContent.style.fontSize = elFont.value + "px";
-  }
+  function applyFont(){ elContent.style.fontSize = elFont.value + "px"; }
   elFont.addEventListener('input', applyFont);
   applyFont();
 
@@ -258,18 +310,20 @@
     raf = requestAnimationFrame(tick);
   }
 
-  btnScroll.addEventListener('click', () => {
+  function startAutoScroll(){
     autoScrollOn = true;
     if (!raf) raf = requestAnimationFrame(tick);
     setStatus("Auto-Scroll läuft.");
-  });
-
-  btnScrollStop.addEventListener('click', () => {
+  }
+  function stopAutoScroll(){
     autoScrollOn = false;
     if (raf) cancelAnimationFrame(raf);
     raf = null;
     setStatus("Auto-Scroll pausiert.");
-  });
+  }
+
+  btnScroll.addEventListener('click', startAutoScroll);
+  btnScrollStop.addEventListener('click', stopAutoScroll);
 
   // Voice-follow (stabil)
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -346,9 +400,7 @@
     restartDelay = Math.min(restartDelayMax, Math.floor(restartDelay * 1.35));
   }
 
-  function resetBackoff(){
-    restartDelay = 350;
-  }
+  function resetBackoff(){ restartDelay = 350; }
 
   function buildRecognition(){
     const r = new SpeechRecognition();
@@ -365,7 +417,6 @@
     }
     if (!shouldRestart) return;
 
-    // if an old instance exists, release it
     if (rec){
       try { rec.onend = null; rec.onerror = null; rec.onresult = null; } catch(e){}
       rec = null;
@@ -381,7 +432,6 @@
 
     rec.onerror = (e) => {
       const err = (e && e.error) ? e.error : "unknown";
-      // "not-allowed" means mic permission / origin issue -> do NOT restart-loop aggressively
       if (err === "not-allowed" || err === "service-not-allowed"){
         shouldRestart = false;
         setListening(false);
@@ -390,12 +440,10 @@
         rec = null;
         return;
       }
-      // "aborted" happens when we stop/restart; "no-speech" often when silence
       scheduleRestart(err);
     };
 
     rec.onend = () => {
-      // Chrome may end randomly; restart if requested
       scheduleRestart("end");
     };
 
@@ -428,7 +476,6 @@
     try{
       rec.start();
     } catch(e){
-      // If start throws (often if called too fast), schedule restart with backoff
       scheduleRestart("start-failed");
     }
   }
@@ -456,13 +503,11 @@
     }
   }
 
-  // Heartbeat: if we're "on" but nothing heard for long and Chrome ended silently, restart.
-  // (Also helps if recognition hangs without firing onend.)
+  // Heartbeat: avoid dead states
   setInterval(() => {
     if (!shouldRestart || !elStable.checked) return;
-    if (!rec) return; // if ended, onend should restart
+    if (!rec) return;
     const now = Date.now();
-    // If we haven't heard anything for 35s, poke a restart to avoid dead state.
     if (lastHeardAt && (now - lastHeardAt) > 35000){
       scheduleRestart("idle");
       try { rec.stop(); } catch(e){}
@@ -497,6 +542,51 @@
   }
   btnFullscreen.addEventListener('click', toggleFullscreen);
   btnFullscreen2.addEventListener('click', toggleFullscreen);
+
+  // Stage Mode
+  let stageMode = false;
+
+  function setStageMode(on){
+    stageMode = !!on;
+    stageHUD.style.display = stageMode ? 'flex' : 'none';
+
+    if (stageMode){
+      collapseMenu();
+      setStatus("🎬 Stage Mode aktiv.");
+    } else {
+      openMenu();
+      setStatus("Stage Mode aus.");
+    }
+  }
+
+  btnStage.addEventListener('click', () => setStageMode(!stageMode));
+
+  // HUD actions
+  hudVoice.addEventListener('click', () => {
+    if (shouldRestart) stopRec();
+    else startRec();
+  });
+
+  hudPause.addEventListener('click', () => {
+    if (autoScrollOn) stopAutoScroll();
+    else startAutoScroll();
+  });
+
+  hudFull.addEventListener('click', () => {
+    toggleFullscreen();
+  });
+
+  hudMenu.addEventListener('click', () => {
+    if (menu.classList.contains('is-collapsed')) openMenu();
+    else collapseMenu();
+  });
+
+  // Tap on prompter toggles menu in Stage Mode
+  elPrompter.addEventListener('click', () => {
+    if (!stageMode) return;
+    if (menu.classList.contains('is-collapsed')) openMenu();
+    else collapseMenu();
+  });
 
 })();
 </script>
