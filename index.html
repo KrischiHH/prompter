@@ -2,8 +2,9 @@
 <html lang="de">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Prompter (Stabil + Stage Mode)</title>
+  <!-- Wichtig: user-scalable=no + viewport-fit -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Prompter (Stabil + Stage Mode, Mobile Locked)</title>
   <style>
     :root{
       --bg:#0b0f14; --panel:#111827; --text:#e5e7eb; --muted:#94a3b8;
@@ -11,28 +12,45 @@
       --menuW: 360px;
     }
     *{ box-sizing:border-box; }
-    html,body{ height:100%; }
+
+    /* verhindert iOS text-size-adjust & einige Auto-Zoom Effekte */
+    html{
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+      height: 100%;
+    }
     body{
       margin:0;
       font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial;
       background:var(--bg);
       color:var(--text);
+      height: 100%;
+      overflow: hidden; /* Seite selbst nicht scrollen */
+      touch-action: manipulation; /* reduziert Zoom-Gesten teils */
+      overscroll-behavior: none;
+      -webkit-tap-highlight-color: transparent;
     }
 
+    /* Fix: echte Viewport-Höhe auf Mobile (dvh) */
     .stage{
       position:relative;
-      height:100%;
+      height: 100dvh; /* dynamische Viewport-Höhe */
+      width: 100vw;
+      overflow: hidden; /* nur prompter scrollt */
       padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     }
 
-    /* Prompter */
+    /* Prompter (einziger Scroll-Container) */
     .prompter{
-      height:100%;
+      position: relative;
+      height: 100%;
+      width: 100%;
       overflow:auto;
       border:1px solid var(--border);
       border-radius: var(--radius);
       background: rgba(17,24,39,.22);
       -webkit-overflow-scrolling: touch;
+      touch-action: pan-y; /* nur vertikal scrollen, kein pinch */
     }
     .marker{
       position: sticky;
@@ -45,9 +63,10 @@
     }
     .content{
       padding: 16vh 5.5vw 24vh;
-      font-size: 30px;
+      font-size: 30px; /* Basis, wird per Slider geändert */
       line-height: 1.55;
       white-space: pre-wrap;
+      word-break: break-word;
     }
 
     /* Side menu */
@@ -67,6 +86,8 @@
       z-index:10;
       transform: translateX(0);
       transition: transform .2s ease;
+      max-height: calc(100% - 20px);
+      overflow: hidden;
     }
     .menu.is-collapsed{ transform: translateX(calc(-100% - 16px)); }
 
@@ -91,6 +112,7 @@
       border-radius: 14px;
       cursor:pointer;
       user-select:none;
+      touch-action: manipulation;
     }
     button.primary{ border-color: rgba(56,189,248,.45); }
     button:disabled{ opacity:.55; cursor:not-allowed; }
@@ -111,9 +133,13 @@
       border-radius: 14px;
       padding: .8rem;
       outline:none;
+      overflow:auto;
+      /* wichtig gegen iOS/Android Auto-Zoom bei Inputs */
+      font-size: 16px;
+      touch-action: pan-y;
     }
 
-    /* Collapsed handle (top-left) */
+    /* Collapsed handle */
     .handle{
       position:absolute;
       top: 14px;
@@ -144,7 +170,7 @@
       50%{ transform: scale(1.15); opacity: .75; }
     }
 
-    /* Stage HUD (floating controls) */
+    /* Stage HUD */
     .stageHUD{
       position:absolute;
       right: 14px;
@@ -156,6 +182,7 @@
       border-radius: 999px;
       border: 1px solid var(--border);
       background: rgba(17,24,39,.88);
+      touch-action: manipulation;
     }
     .stageHUD button{
       width: 54px;
@@ -164,10 +191,32 @@
       padding: 0;
       font-size: 18px;
     }
+
+    /* Portrait-only hint (optional): wenn Landscape, warnen */
+    .rotateWarn{
+      position:absolute;
+      inset: 0;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      text-align:center;
+      padding: 24px;
+      background: rgba(0,0,0,.72);
+      z-index: 100;
+      color: var(--text);
+      font-size: 18px;
+    }
+    @media (orientation: landscape){
+      .rotateWarn{ display:flex; }
+    }
   </style>
 </head>
 <body>
-  <div class="stage">
+  <div class="stage" id="stage">
+    <div class="rotateWarn">
+      Bitte Smartphone hochkant halten 📱↕️
+    </div>
+
     <div class="handle" id="handle">
       <button id="btnMenuOpen" class="primary">☰</button>
       <button id="btnFullscreen2">⛶</button>
@@ -224,7 +273,6 @@
       </div>
     </aside>
 
-    <!-- Stage HUD -->
     <div class="stageHUD" id="stageHUD" aria-label="Stage Controls">
       <button id="hudVoice" class="primary" title="Voice an/aus">🎙</button>
       <button id="hudPause" title="Auto-Scroll an/aus">⏸</button>
@@ -240,6 +288,20 @@
 
 <script>
 (() => {
+  // --- Hard block pinch zoom (best effort) ---
+  // Note: Chrome Android may still allow certain zoom gestures for accessibility.
+  document.addEventListener('gesturestart', (e) => e.preventDefault?.(), { passive: false });
+  document.addEventListener('gesturechange', (e) => e.preventDefault?.(), { passive: false });
+  document.addEventListener('gestureend', (e) => e.preventDefault?.(), { passive: false });
+
+  // Block double-tap zoom (best effort)
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTouchEnd <= 300) e.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
+
   // Elements
   const menu = document.getElementById('menu');
   const handle = document.getElementById('handle');
@@ -329,14 +391,14 @@
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   let rec = null;
 
-  let shouldRestart = false;     // master switch
+  let shouldRestart = false;
   let restartTimer = null;
-  let restartDelay = 350;        // backoff start
-  const restartDelayMax = 5000;  // backoff cap
+  let restartDelay = 350;
+  const restartDelayMax = 5000;
 
   let lastTranscript = "";
   let lastMatchIndex = 0;
-  let lastHeardAt = 0;           // activity heartbeat
+  let lastHeardAt = 0;
 
   function normalize(s){
     return (s || "")
@@ -443,9 +505,7 @@
       scheduleRestart(err);
     };
 
-    rec.onend = () => {
-      scheduleRestart("end");
-    };
+    rec.onend = () => scheduleRestart("end");
 
     rec.onresult = (ev) => {
       let interim = "", finalTxt = "";
@@ -473,11 +533,8 @@
       }
     };
 
-    try{
-      rec.start();
-    } catch(e){
-      scheduleRestart("start-failed");
-    }
+    try{ rec.start(); }
+    catch(e){ scheduleRestart("start-failed"); }
   }
 
   function startRec(){
@@ -503,7 +560,6 @@
     }
   }
 
-  // Heartbeat: avoid dead states
   setInterval(() => {
     if (!shouldRestart || !elStable.checked) return;
     if (!rec) return;
@@ -549,7 +605,6 @@
   function setStageMode(on){
     stageMode = !!on;
     stageHUD.style.display = stageMode ? 'flex' : 'none';
-
     if (stageMode){
       collapseMenu();
       setStatus("🎬 Stage Mode aktiv.");
@@ -558,7 +613,6 @@
       setStatus("Stage Mode aus.");
     }
   }
-
   btnStage.addEventListener('click', () => setStageMode(!stageMode));
 
   // HUD actions
@@ -572,9 +626,7 @@
     else startAutoScroll();
   });
 
-  hudFull.addEventListener('click', () => {
-    toggleFullscreen();
-  });
+  hudFull.addEventListener('click', () => toggleFullscreen());
 
   hudMenu.addEventListener('click', () => {
     if (menu.classList.contains('is-collapsed')) openMenu();
